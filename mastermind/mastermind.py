@@ -25,7 +25,6 @@ class Mastermind:
         self._rounds = rounds
         self._weapons = weapons
         self._S = self._generate_codes()
-        self._possible_guesses = self._S.copy()
         self._scoreset_counts = []  # priority queue
 
     def prune(self, guess: Guess, score: Score):
@@ -39,14 +38,8 @@ class Mastermind:
         
         _, _, guess = heappop(self._scoreset_counts)
         
-        # remove guess from lists
-        try:
-            self._S.remove(guess)
-        except ValueError:
-            pass
-        finally:
-            self._possible_guesses.remove(guess)
-        
+        # remove guess from list
+        self._S.remove(guess)       
         
         return guess
                 
@@ -63,9 +56,9 @@ class Mastermind:
         
         self._scoreset_counts.clear()  # reset counts
          
-        for pg in self._possible_guesses:
+        for s1 in self._S:
             scores = defaultdict(int)
-            for s in self._S:
+            for s2 in self._S:
                 scores[Mastermind.score(pg, s)] += 1
             # -(pg in self._S) prioritizes items in S
             heappush(self._scoreset_counts, (max(scores.values()), -(pg in self._S),pg))
