@@ -1,11 +1,12 @@
-from collections import defaultdict
-from heapq import heappop, heappush
 from itertools import permutations
 from typing import Tuple
 from requests import session
 
 import argparse
+import logging
 import sys
+
+logging.basicConfig(level=logging.DEBUG)
 
 # Guess is a list of variable int tuples.
 Guess = Tuple[int, ...]
@@ -13,55 +14,25 @@ Score = Tuple[int, int]
 
 
 class Mastermind:
-    '''Implementation of Knuth's algorithm to play the Mastermind game.
-    
-    The original algorithm is supposed to solve the game in five moves or less.
-    Since the challenge uses a modified version of the game, and I'm not nearly
-    as smart as Knuth, I don't know how optimized this is :)'''
-    
-    def __init__(self, gladiators: int, guesses: int, rounds: int, weapons: int):
+    '''Implementation of Swaszek strategy to play the Mastermind game.'''
+
+    def __init__(self, gladiators: int, weapons: int):
         self._gladiators = gladiators
-        self._guesses = guesses
-        self._rounds = rounds
         self._weapons = weapons
-        self._S = self._generate_codes()
-        self._scoreset_counts = []  # priority queue
+        self._S = None
 
     def prune(self, guess: Guess, score: Score):
         '''Remove from S any code that would not give the same
         response if it (the guess) were the code.'''
 
-        self._S = [s for s in self._S if Mastermind.score(s, guess) == score]
+        self._S = (s for s in self._S if Mastermind.score(s, guess) == score)
 
     def next_guess(self) -> Guess:
-        self._update_scoreset_counts()
-        
-        _, _, guess = heappop(self._scoreset_counts)
-        
-        # remove guess from list
-        self._S.remove(guess)       
-        
-        return guess
-                
-    def _generate_codes(self):
-        '''Generate all possible code permutations.'''
-        return set(permutations(range(self._weapons), self._gladiators))  # permutations instead of product
-    
-    def _update_scoreset_counts(self):
-        '''Helper function to generate a list with how many possibilities in
-        S would be eliminated for each possible colored/white peg score.
-        
-        e.g.: [(25, (1, 2, 3, 4)), (15, (2, 1, 4, 3)), ...]
-        '''
-        
-        self._scoreset_counts.clear()  # reset counts
-         
-        for s1 in self._S:
-            scores = defaultdict(int)
-            for s2 in self._S:
-                scores[Mastermind.score(pg, s)] += 1
-            # -(pg in self._S) prioritizes items in S
-            heappush(self._scoreset_counts, (max(scores.values()), -(pg in self._S),pg))
+        return next(self._S)
+
+    def reset(self):
+        '''Regenerate possible guesses.'''
+        self._S = permutations(range(self._weapons), self._gladiators)
 
     @staticmethod
     def score(guess: Guess, code: Guess) -> Score:
@@ -78,57 +49,76 @@ class Mastermind:
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Play Praetorian Mastermind challenge.')
-    parser.add_argument('-e', '--email', default='nbsantos@gmail.com', help='email address')
-    parser.add_argument('-l', '--level', type=int, default=1, help='which game level to play')
-    parser.add_argument('-s', '--hash', action='store_true', help='print the challenge hash')
-    parser.add_argument('-r', '--reset', action='store_true', help='reset the game')
+    parser = argparse.ArgumentParser(
+        description='Play Praetorian Mastermind challenge.')
+    parser.add_argument(
+        '-e', '--email', default='nbsantos@gmail.com', help='email address')
+    parser.add_argument('-l', '--level', type=int,
+                        default=1, help='which game level to play')
+    parser.add_argument('-s', '--hash', action='store_true',
+                        help='print the challenge hash')
+    parser.add_argument(
+        '-r', '--reset', action='store_true', help='reset the game')
     args = parser.parse_args()
-    
+
     base = 'https://mastermind.praetorian.com'
     auth = base + '/api-auth-token/'
     level = base + f'/level/{args.level}/'
     hash_ = base + '/hash/'
     reset = base + '/reset/'
-    
+
     # auth
     s = session()
     r = s.post(auth, json={'email': args.email})
     r.raise_for_status()
-    s.headers = r.json()
-    
+    j = r.json()
+    logging.debug(j)
+    s.headers = j
+
     if args.hash:
         r = s.get(hash_)
-        hash_ = r.json().get('hash', 'Hash not available')
+        j = r.json()
+        logging.debug(j)
+        hash_ = j.get('hash', 'Hash not available')
         print(hash_)
     elif args.reset:
         r = s.post(reset)
-        msg = r.json().get('message', 'Unable to reset session')
-        print(msg)
+        j = r.json()
+        logging.debug(j)
+        msg = j.get('message', 'Unable to reset session')
+        logging.error(msg)
     else:
         r = s.get(level)
         j = r.json()
+        logging.debug(j)
         if error := j.get('error'):
-            print(error)
-            sys.exit(0)        
-        
+            logging.error(error)
+            sys.exit(0)
+
         gladiators = j['numGladiators']
         guesses = j['numGuesses']
         rounds = j['numRounds']
         weapons = j['numWeapons']
-        
-        m = Mastermind(gladiators, guesses, rounds, weapons)
+
+        logging.info('Round 1... Fight!!!')
+
+        m = Mastermind(gladiators, weapons)
+        m.reset()
 
         while True:
             guess = m.next_guess()
             r = s.post(level, json={'guess': list(guess)})
-            print(r.json())
-            error = r.json().get('error', '')
-            if error := r.json().get('error'):
-                print(error)
+            j = r.json()
+            logging.debug(j)
+            if error := j.get('error'):
+                logging.error(error)
                 sys.exit(0)
-            if msg := r.json().get('message', ''):
-                print(msg)
+            if left := j.get('roundsLeft'):  # next round
+                logging.info(f'Round {rounds - left + 1}... Fight!!!')
+                m.reset()  # reset class
+                continue
+            if msg := j.get('message'):  # next level
+                logging.info(msg)
                 break
-            score = tuple(r.json().get('response', []))
+            score = tuple(j.get('response', []))
             m.prune(guess, score)
