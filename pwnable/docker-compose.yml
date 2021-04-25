@@ -1,0 +1,12 @@
+version: '2'
+
+services:
+  reverse:
+    build: .
+    image: nbsantos/reverse:v1
+    ports:
+      - "2888:2888"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
